@@ -17,12 +17,22 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+// Constants for AmneziaWG identification
+const (
+	amneziaGenlName = "amneziawg"
+	amneziaKind     = "amneziawg"
+)
+
 var _ wginternal.Client = &Client{}
 
 // A Client provides access to Linux WireGuard netlink information.
 type Client struct {
-	c      *genetlink.Conn
-	family genetlink.Family
+	c *genetlink.Conn
+
+	// Store pointers to families so we can distinguish if they are loaded.
+	// These structs contain the Name, ID, and Version required for requests.
+	wgFamily      *genetlink.Family
+	amneziaFamily *genetlink.Family
 
 	interfaces func() ([]string, error)
 }
@@ -48,24 +58,39 @@ func New() (*Client, bool, error) {
 
 // initClient is the internal Client constructor used in some tests.
 func initClient(c *genetlink.Conn) (*Client, bool, error) {
-	f, err := c.GetFamily(unix.WG_GENL_NAME)
-	if err != nil {
+	// Try to locate the standard WireGuard family.
+	wg, errWg := c.GetFamily(unix.WG_GENL_NAME)
+
+	// Try to locate the AmneziaWG family.
+	// Using a pointer to distinguish between "not found" and "found".
+	var amnezia *genetlink.Family
+	if af, err := c.GetFamily(amneziaGenlName); err == nil {
+		amnezia = &af
+	}
+
+	// If neither family is found, return the error from the standard WG lookup.
+	if errWg != nil && amnezia == nil {
 		_ = c.Close()
 
-		if errors.Is(err, os.ErrNotExist) {
-			// The generic netlink interface is not available.
-			return nil, false, nil
+		// If WG is missing but we had a specific Netlink error (not just NotExist), return it.
+		if !errors.Is(errWg, os.ErrNotExist) {
+			return nil, false, errWg
 		}
+		// If both are strictly missing (NotExist), return false with no error (not supported).
+		return nil, false, nil
+	}
 
-		return nil, false, err
+	// Make a pointer for standard WG if it was found.
+	var wgPtr *genetlink.Family
+	if errWg == nil {
+		wgPtr = &wg
 	}
 
 	return &Client{
-		c:      c,
-		family: f,
-
-		// By default, gather only WireGuard interfaces using rtnetlink.
-		interfaces: rtnlInterfaces,
+		c:             c,
+		wgFamily:      wgPtr,
+		amneziaFamily: amnezia,
+		interfaces:    rtnlInterfaces,
 	}, true, nil
 }
 
@@ -77,7 +102,7 @@ func (c *Client) Close() error {
 // Devices implements wginternal.Client.
 func (c *Client) Devices() ([]*wgtypes.Device, error) {
 	// By default, rtnetlink is used to fetch a list of all interfaces and then
-	// filter that list to only find WireGuard interfaces.
+	// filter that list to only find WireGuard/AmneziaWG interfaces.
 	//
 	// The remainder of this function assumes that any returned device from this
 	// function is a valid WireGuard device.
@@ -101,13 +126,80 @@ func (c *Client) Devices() ([]*wgtypes.Device, error) {
 
 // Device implements wginternal.Client.
 func (c *Client) Device(name string) (*wgtypes.Device, error) {
-	// Don't bother querying netlink with empty input.
 	if name == "" {
 		return nil, os.ErrNotExist
 	}
 
-	// Fetching a device by interface index is possible as well, but we only
-	// support fetching by name as it seems to be more convenient in general.
+	// Determine which family owns this device.
+	family, err := c.getDeviceFamily(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now fetch the data using the correct family ID and Version.
+	return c.getDeviceInternal(name, *family)
+}
+
+// ConfigureDevice implements wginternal.Client.
+func (c *Client) ConfigureDevice(name string, cfg wgtypes.Config) error {
+	family, err := c.getDeviceFamily(name)
+	if err != nil {
+		return err
+	}
+
+	batches := buildBatches(cfg)
+	if len(batches) == 0 {
+		return nil
+	}
+
+	for _, batch := range batches {
+		attrs, err := configAttrs(name, batch)
+		if err != nil {
+			return err
+		}
+
+		// Proceed with the family determined in the first step.
+		if _, err := c.execute(*family, unix.WG_CMD_SET_DEVICE, netlink.Request|netlink.Acknowledge, attrs); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getDeviceFamily determines if a device belongs to standard WireGuard or AmneziaWG.
+// It prioritizes standard WireGuard.
+func (c *Client) getDeviceFamily(name string) (*genetlink.Family, error) {
+	// 1. Try Standard WireGuard if loaded.
+	if c.wgFamily != nil {
+		// We perform a cheap check (GET_DEVICE) to see if the kernel module accepts this interface.
+		// We rely on getDeviceInternal to perform the actual Netlink call.
+		_, err := c.getDeviceInternal(name, *c.wgFamily)
+		if err == nil {
+			return c.wgFamily, nil
+		}
+		// If error is something other than NotExist/OpNotSupported, fail immediately.
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.EOPNOTSUPP) {
+			return nil, err
+		}
+	}
+
+	// 2. Try AmneziaWG if loaded.
+	if c.amneziaFamily != nil {
+		_, err := c.getDeviceInternal(name, *c.amneziaFamily)
+		if err == nil {
+			return c.amneziaFamily, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.EOPNOTSUPP) {
+			return nil, err
+		}
+	}
+
+	return nil, os.ErrNotExist
+}
+
+// getDeviceInternal executes the netlink call to fetch device details for a specific family.
+func (c *Client) getDeviceInternal(name string, family genetlink.Family) (*wgtypes.Device, error) {
 	b, err := netlink.MarshalAttributes([]netlink.Attribute{{
 		Type: unix.WGDEVICE_A_IFNAME,
 		Data: nlenc.Bytes(name),
@@ -116,65 +208,48 @@ func (c *Client) Device(name string) (*wgtypes.Device, error) {
 		return nil, err
 	}
 
-	msgs, err := c.execute(unix.WG_CMD_GET_DEVICE, netlink.Request|netlink.Dump, b)
+	msgs, err := c.execute(family, unix.WG_CMD_GET_DEVICE, netlink.Request|netlink.Dump, b)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseDevice(msgs)
-}
-
-// ConfigureDevice implements wginternal.Client.
-func (c *Client) ConfigureDevice(name string, cfg wgtypes.Config) error {
-	// Large configurations are split into batches for use with netlink.
-	for _, b := range buildBatches(cfg) {
-		attrs, err := configAttrs(name, b)
-		if err != nil {
-			return err
-		}
-
-		// Request acknowledgement of our request from netlink, even though the
-		// output messages are unused.  The netlink package checks and trims the
-		// status code value.
-		if _, err := c.execute(unix.WG_CMD_SET_DEVICE, netlink.Request|netlink.Acknowledge, attrs); err != nil {
-			return err
-		}
+	d, err := parseDevice(msgs)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil
+	if family.Name == amneziaGenlName {
+		d.IsAmnezia = true
+	}
+
+	return d, nil
 }
 
-// execute executes a single WireGuard netlink request with the specified command,
-// header flags, and attribute arguments.
-func (c *Client) execute(command uint8, flags netlink.HeaderFlags, attrb []byte) ([]genetlink.Message, error) {
+// execute executes a single Netlink request.
+// It uses the passed family to determine the Family ID and the Generic Netlink Version.
+func (c *Client) execute(family genetlink.Family, command uint8, flags netlink.HeaderFlags, attrb []byte) ([]genetlink.Message, error) {
 	msg := genetlink.Message{
 		Header: genetlink.Header{
 			Command: command,
-			Version: unix.WG_GENL_VERSION,
+			Version: family.Version, // Use the version reported by the kernel (e.g. 2 for Amnezia)
 		},
 		Data: attrb,
 	}
 
-	msgs, err := c.c.Execute(msg, c.family.ID, flags)
+	msgs, err := c.c.Execute(msg, family.ID, flags)
 	if err == nil {
 		return msgs, nil
 	}
 
-	// We don't want to expose netlink errors directly to callers so unpack to
-	// something more generic.
 	oerr, ok := err.(*netlink.OpError)
 	if !ok {
-		// Expect all errors to conform to netlink.OpError.
-		return nil, fmt.Errorf("wglinux: netlink operation returned non-netlink error (please file a bug: https://golang.zx2c4.com/wireguard/wgctrl): %v", err)
+		return nil, fmt.Errorf("wglinux: netlink operation returned non-netlink error: %v", err)
 	}
 
 	switch oerr.Err {
-	// Convert "no such device" and "not a wireguard device" to an error
-	// compatible with os.ErrNotExist for easy checking.
 	case unix.ENODEV, unix.ENOTSUP:
 		return nil, os.ErrNotExist
 	default:
-		// Expose the inner error directly (such as EPERM).
 		return nil, oerr.Err
 	}
 }
@@ -248,7 +323,7 @@ func parseRTNLInterfaces(msgs []syscall.NetlinkMessage) ([]string, error) {
 const wgKind = "wireguard"
 
 // isWGKind parses netlink attributes to determine if a link is a WireGuard
-// device, then populates ok with the result.
+// or AmneziaWG device.
 func isWGKind(ok *bool) func(b []byte) error {
 	return func(b []byte) error {
 		ad, err := netlink.NewAttributeDecoder(b)
@@ -261,7 +336,9 @@ func isWGKind(ok *bool) func(b []byte) error {
 				continue
 			}
 
-			if ad.String() == wgKind {
+			s := ad.String()
+			// Check for both kinds
+			if s == wgKind || s == amneziaKind {
 				*ok = true
 				return nil
 			}

@@ -22,6 +22,7 @@ func find() ([]string, error) {
 		// It seems that /var/run is a common location between Linux and the
 		// BSDs, even though it's a symlink on Linux.
 		"/var/run/wireguard",
+		"/var/run/amneziawg",
 	})
 }
 

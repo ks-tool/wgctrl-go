@@ -63,6 +63,66 @@ func writeConfig(w io.Writer, cfg wgtypes.Config) {
 		fmt.Fprintf(w, "fwmark=%d\n", *cfg.FirewallMark)
 	}
 
+	// --- AmneziaWG Parameters Start ---
+
+	// Junk Packets
+	if cfg.Jc != nil {
+		fmt.Fprintf(w, "jc=%d\n", *cfg.Jc)
+	}
+	if cfg.Jmin != nil {
+		fmt.Fprintf(w, "jmin=%d\n", *cfg.Jmin)
+	}
+	if cfg.Jmax != nil {
+		fmt.Fprintf(w, "jmax=%d\n", *cfg.Jmax)
+	}
+
+	// Padding
+	if cfg.S1 != nil {
+		fmt.Fprintf(w, "s1=%d\n", *cfg.S1)
+	}
+	if cfg.S2 != nil {
+		fmt.Fprintf(w, "s2=%d\n", *cfg.S2)
+	}
+	if cfg.S3 != nil {
+		fmt.Fprintf(w, "s3=%d\n", *cfg.S3)
+	}
+	if cfg.S4 != nil {
+		fmt.Fprintf(w, "s4=%d\n", *cfg.S4)
+	}
+
+	// Headers (passed as strings because they can be ranges "123-456")
+	if cfg.H1 != nil {
+		fmt.Fprintf(w, "h1=%s\n", *cfg.H1)
+	}
+	if cfg.H2 != nil {
+		fmt.Fprintf(w, "h2=%s\n", *cfg.H2)
+	}
+	if cfg.H3 != nil {
+		fmt.Fprintf(w, "h3=%s\n", *cfg.H3)
+	}
+	if cfg.H4 != nil {
+		fmt.Fprintf(w, "h4=%s\n", *cfg.H4)
+	}
+
+	// Init Custom Packets ("Custom signature packets")
+	if cfg.I1 != nil {
+		fmt.Fprintf(w, "i1=%s\n", *cfg.I1)
+	}
+	if cfg.I2 != nil {
+		fmt.Fprintf(w, "i2=%s\n", *cfg.I2)
+	}
+	if cfg.I3 != nil {
+		fmt.Fprintf(w, "i3=%s\n", *cfg.I3)
+	}
+	if cfg.I4 != nil {
+		fmt.Fprintf(w, "i4=%s\n", *cfg.I4)
+	}
+	if cfg.I5 != nil {
+		fmt.Fprintf(w, "i5=%s\n", *cfg.I5)
+	}
+
+	// --- AmneziaWG Parameters End ---
+
 	if cfg.ReplacePeers {
 		fmt.Fprintln(w, "replace_peers=true")
 	}

@@ -15,6 +15,28 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+// AmneziaWG Netlink attribute constants.
+// Derived from amneziawg-linux-kernel-module/src/uapi/wireguard.h
+const (
+	WGDEVICE_A_JC   = 9
+	WGDEVICE_A_JMIN = 10
+	WGDEVICE_A_JMAX = 11
+	WGDEVICE_A_S1   = 12
+	WGDEVICE_A_S2   = 13
+	WGDEVICE_A_H1   = 14
+	WGDEVICE_A_H2   = 15
+	WGDEVICE_A_H3   = 16
+	WGDEVICE_A_H4   = 17
+	// WGDEVICE_A_PEER = 18
+	WGDEVICE_A_S3 = 19
+	WGDEVICE_A_S4 = 20
+	WGDEVICE_A_I1 = 21
+	WGDEVICE_A_I2 = 22
+	WGDEVICE_A_I3 = 23
+	WGDEVICE_A_I4 = 24
+	WGDEVICE_A_I5 = 25
+)
+
 // configAttrs creates the required encoded netlink attributes to configure
 // the device specified by name using the non-nil fields in cfg.
 func configAttrs(name string, cfg wgtypes.Config) ([]byte, error) {
@@ -36,6 +58,67 @@ func configAttrs(name string, cfg wgtypes.Config) ([]byte, error) {
 	if cfg.ReplacePeers {
 		ae.Uint32(unix.WGDEVICE_A_FLAGS, unix.WGDEVICE_F_REPLACE_PEERS)
 	}
+
+	// -------------------------------------------------------------------------
+	// AmneziaWG specific attributes encoding.
+	// We check if the fields are present in the config (not nil) and encode them.
+	// -------------------------------------------------------------------------
+
+	// Uint16 parameters
+	if cfg.Jc != nil {
+		ae.Uint16(WGDEVICE_A_JC, uint16(*cfg.Jc))
+	}
+	if cfg.Jmin != nil {
+		ae.Uint16(WGDEVICE_A_JMIN, uint16(*cfg.Jmin))
+	}
+	if cfg.Jmax != nil {
+		ae.Uint16(WGDEVICE_A_JMAX, uint16(*cfg.Jmax))
+	}
+
+	if cfg.S1 != nil {
+		ae.Uint16(WGDEVICE_A_S1, uint16(*cfg.S1))
+	}
+	if cfg.S2 != nil {
+		ae.Uint16(WGDEVICE_A_S2, uint16(*cfg.S2))
+	}
+	if cfg.S3 != nil {
+		ae.Uint16(WGDEVICE_A_S3, uint16(*cfg.S3))
+	}
+	if cfg.S4 != nil {
+		ae.Uint16(WGDEVICE_A_S4, uint16(*cfg.S4))
+	}
+
+	// String parameters (Magic Headers)
+	if cfg.H1 != nil {
+		ae.String(WGDEVICE_A_H1, *cfg.H1)
+	}
+	if cfg.H2 != nil {
+		ae.String(WGDEVICE_A_H2, *cfg.H2)
+	}
+	if cfg.H3 != nil {
+		ae.String(WGDEVICE_A_H3, *cfg.H3)
+	}
+	if cfg.H4 != nil {
+		ae.String(WGDEVICE_A_H4, *cfg.H4)
+	}
+
+	// String parameters (Custom Packets)
+	if cfg.I1 != nil {
+		ae.String(WGDEVICE_A_I1, *cfg.I1)
+	}
+	if cfg.I2 != nil {
+		ae.String(WGDEVICE_A_I2, *cfg.I2)
+	}
+	if cfg.I3 != nil {
+		ae.String(WGDEVICE_A_I3, *cfg.I3)
+	}
+	if cfg.I4 != nil {
+		ae.String(WGDEVICE_A_I4, *cfg.I4)
+	}
+	if cfg.I5 != nil {
+		ae.String(WGDEVICE_A_I5, *cfg.I5)
+	}
+	// -------------------------------------------------------------------------
 
 	// Only apply peer attributes if necessary.
 	if len(cfg.Peers) > 0 {

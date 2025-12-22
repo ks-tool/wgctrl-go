@@ -1,9 +1,9 @@
 package wgtypes
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"math/rand"
 	"net"
 	"time"
 
@@ -63,6 +63,8 @@ type Device struct {
 	// The firewall mark can be used in conjunction with firewall software to
 	// take action on outgoing WireGuard packets.
 	FirewallMark int
+
+	IsAmnezia bool
 
 	// Peers is the list of network peers associated with this device.
 	Peers []Peer
@@ -229,6 +231,113 @@ type Config struct {
 
 	// Peers specifies a list of peer configurations to apply to a device.
 	Peers []PeerConfig
+
+	// --- AmneziaWG Specific Configuration ---
+	// All fields are pointers to handle "optional update" semantics.
+
+	// Junk Packet parameters
+	Jc   *int // Count
+	Jmin *int // Min size
+	Jmax *int // Max size
+
+	// Message Padding parameters (bytes)
+	S1 *int // Init
+	S2 *int // Response
+	S3 *int // Cookie
+	S4 *int // Transport
+
+	// Message Magic Headers
+	// In AmneziaWG these can be ranges ("123-456") or single values. Hence string.
+	H1 *string // Init
+	H2 *string // Response
+	H3 *string // Cookie
+	H4 *string // Transport
+
+	// Init Packet Magic / Custom Signature (obfuscation)
+	I1 *string
+	I2 *string
+	I3 *string
+	I4 *string
+	I5 *string
+}
+
+// generateAmneziaParams populates the config with obfuscation values.
+func (cfg *Config) GenerateAmneziaParams() {
+	// 1. Initialize random source.
+	// We use standard math/rand because this is for obfuscation (fooling DPI),
+	// not for cryptography (encryption is handled by WireGuard keys).
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	// ==========================================
+	// 1. JUNK PACKETS (Jc, Jmin, Jmax)
+	// These packets are sent BEFORE the handshake to look like random noise.
+	// ==========================================
+
+	// Jc: Packet Count.
+	// We send between 3 and 7 junk packets.
+	// High values (e.g., >20) delay the connection start. 3-7 is optimal.
+	cfg.Jc = intPtr(3 + r.Intn(5))
+
+	// Jmin/Jmax: Packet Size (Bytes).
+	// We keep them small (~40-90 bytes) to resemble TCP ACK/SYN packets.
+	// We ensure Jmax is significantly smaller than MTU (usually 1280 or 1500).
+	cfg.Jmin = intPtr(40 + r.Intn(20))             // 40-59 bytes
+	cfg.Jmax = intPtr(*cfg.Jmin + 20 + r.Intn(40)) // Jmin + (20-59 bytes)
+
+	// ==========================================
+	// 2. PACKET PADDING (S1, S2...)
+	// These values add random garbage bytes to the END of WireGuard packets.
+	// This breaks the fixed size signatures of the protocol.
+	// ==========================================
+
+	// S1: Init Message Padding (Bytes).
+	// Standard WG Init packet is exactly 148 bytes.
+	// We add 20-100 bytes. The packet remains small enough to travel safely.
+	cfg.S1 = intPtr(20 + r.Intn(80))
+
+	// S2: Response Message Padding (Bytes).
+	// Standard WG Response is 92 bytes.
+	cfg.S2 = intPtr(20 + r.Intn(80))
+
+	// S3: Cookie Message Padding.
+	// Rarely sent, but good to mask just in case.
+	cfg.S3 = intPtr(10 + r.Intn(30))
+
+	// S4: Transport Data Padding.
+	// IMPORTANT: This adds bytes to EVERY data packet (YouTube, downloads, etc).
+	// We keep it at 0 to avoid bandwidth overhead and speed loss.
+	cfg.S4 = intPtr(0)
+
+	// ==========================================
+	// 3. MAGIC HEADERS (H1 - H4)
+	// These emulate the Packet ID (uint32).
+	// Standard WireGuard uses 1, 2, 3, 4. Amnezia allows custom values.
+	// ==========================================
+
+	// We generate distinct, static random integers for each header type.
+	// We use a safe offset (e.g. > 1,000,000) to avoid conflict with standard protocols.
+	// The maximum value for uint32 is ~4 Billion.
+
+	// Helper to generate a static string representation of a random uint32
+	genStaticHeader := func() *string {
+		// Generate a random number between 100,000,000 and 2,100,000,000
+		val := 100000000 + r.Intn(2000000000)
+		res := fmt.Sprintf("%d", val)
+		return &res
+	}
+
+	cfg.H1 = genStaticHeader() // Handshake Initiation
+	cfg.H2 = genStaticHeader() // Handshake Response
+	cfg.H3 = genStaticHeader() // Cookie Reply
+	cfg.H4 = genStaticHeader() // Transport Data
+
+	// Init-packets (I1..I5) are usually for specific protocol emulation (TLS/DTLS).
+	// General recommendation is to use it on the client side only
+}
+
+// intPtr is a helper to get a pointer to an int generic literal
+func intPtr(i int) *int {
+	return &i
 }
 
 // TODO(mdlayher): consider adding ProtocolVersion in PeerConfig.
