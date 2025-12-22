@@ -12,7 +12,7 @@ The `Device` struct now includes an `IsAmnezia` flag and identifies the implemen
 ```go
 type Device struct {
     Name         string
-    Type         DeviceType // Now identifies AWG implementations
+    Type         DeviceType
     PublicKey    Key
     IsAmnezia    bool       // True if the device supports AmneziaWG obfuscation
     Peers        []Peer
