@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.zx2c4.com/wireguard/wgctrl/internal/wginternal"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"github.com/Jipok/wgctrl-go/internal/wginternal"
+	"github.com/Jipok/wgctrl-go/wgtypes"
 )
 
 var _ wginternal.Client = &Client{}

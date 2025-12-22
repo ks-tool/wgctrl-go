@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/google/go-cmp/cmp"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // Example string source (with some slight modifications to use all fields):

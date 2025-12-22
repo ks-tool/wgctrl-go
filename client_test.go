@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Jipok/wgctrl-go/internal/wginternal"
+	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/google/go-cmp/cmp"
-	"golang.zx2c4.com/wireguard/wgctrl/internal/wginternal"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 var (

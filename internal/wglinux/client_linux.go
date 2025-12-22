@@ -9,12 +9,12 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/Jipok/wgctrl-go/internal/wginternal"
+	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/mdlayher/genetlink"
 	"github.com/mdlayher/netlink"
 	"github.com/mdlayher/netlink/nlenc"
 	"golang.org/x/sys/unix"
-	"golang.zx2c4.com/wireguard/wgctrl/internal/wginternal"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // Constants for AmneziaWG identification

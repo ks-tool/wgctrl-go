@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/google/go-cmp/cmp"
 	"github.com/mdlayher/genetlink"
 	"github.com/mdlayher/genetlink/genltest"
@@ -20,7 +21,6 @@ import (
 	"github.com/mdlayher/netlink/nlenc"
 	"github.com/mdlayher/netlink/nltest"
 	"golang.org/x/sys/unix"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 const (

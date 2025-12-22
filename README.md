@@ -1,30 +1,36 @@
-# wgctrl [![Test Status](https://github.com/WireGuard/wgctrl-go/workflows/Linux%20Test/badge.svg)](https://github.com/WireGuard/wgctrl-go/actions) [![Go Reference](https://pkg.go.dev/badge/golang.zx2c4.com/wireguard/wgctrl.svg)](https://pkg.go.dev/golang.zx2c4.com/wireguard/wgctrl) [![Go Report Card](https://goreportcard.com/badge/golang.zx2c4.com/wireguard/wgctrl)](https://goreportcard.com/report/golang.zx2c4.com/wireguard/wgctrl)
+# wgctrl-go
+
+This is a fork of [WireGuard/wgctrl-go](https://github.com/WireGuard/wgctrl-go) revised to support **AmneziaWG** (AWG). 
+
+It provides native Go control over WireGuard/AmneziaWG devices on **Linux**, supporting both the **Kernel module** and **Userspace** implementations (via netlink and unix sockets).
+
+## API Changes
+
+### Device Structure
+The `Device` struct now includes an `IsAmnezia` flag and identifies the implementation type.
+
+```go
+type Device struct {
+    Name         string
+    Type         DeviceType // Now identifies AWG implementations
+    PublicKey    Key
+    IsAmnezia    bool       // True if the device supports AmneziaWG obfuscation
+    Peers        []Peer
+    // ... other standard fields
+}
+```
+
+### Amnezia Configuration
+The `Config` struct is extended with Amnezia-specific fields (Jc, Jmin, Jmax, S1-S4, H1-H4). You can manually set these or use the helper:
+
+```go
+cfg := &wgtypes.Config{}
+// Automatically populate Config with randomized obfuscation values to bypass DPI
+cfg.GenerateAmneziaParams() 
+```
 
 
-Package `wgctrl` enables control of WireGuard devices on multiple platforms.
+## Projects using this library
 
-For more information on WireGuard, please see <https://www.wireguard.com/>.
-
-MIT Licensed.
-
-## Overview
-
-`wgctrl` can control multiple types of WireGuard devices, including:
-
-- Kernel module devices
-  - Linux: via generic netlink
-  - FreeBSD: via ioctl interface
-  - OpenBSD: via ioctl interface (read-only)
-  - Windows: via ioctl interface
-- Userspace devices via the userspace configuration protocol
-
-As new operating systems add support for in-kernel WireGuard implementations,
-this package should also be extended to support those native implementations.
-
-If you are aware of any efforts on this front, please
-[file an issue](https://github.com/WireGuard/wgctrl-go/issues/new).
-
-This package implements WireGuard configuration protocol operations, enabling
-the configuration of existing WireGuard devices. Operations such as creating
-WireGuard devices, or applying IP addresses to those devices, are out of scope
-for this package.
+*   **[jwg](https://github.com/Jipok/jwg)**: A lightweight CLI manager (~1k LOC) for WireGuard & AmneziaWG. Automates networking, nftables/UFW, and peer management.
+*   **[dnsr](https://github.com/Jipok/dnsr)**: DNS-based selective routing tool for DPI bypass on Linux and routers.

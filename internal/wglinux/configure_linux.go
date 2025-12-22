@@ -9,10 +9,10 @@ import (
 	"net"
 	"unsafe"
 
+	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/mdlayher/netlink"
 	"github.com/mdlayher/netlink/nlenc"
 	"golang.org/x/sys/unix"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // AmneziaWG Netlink attribute constants.

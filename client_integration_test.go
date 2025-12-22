@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jipok/wgctrl-go"
+	"github.com/Jipok/wgctrl-go/internal/wginternal"
+	"github.com/Jipok/wgctrl-go/internal/wgtest"
+	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/google/go-cmp/cmp"
 	"github.com/mikioh/ipaddr"
-	"golang.zx2c4.com/wireguard/wgctrl"
-	"golang.zx2c4.com/wireguard/wgctrl/internal/wginternal"
-	"golang.zx2c4.com/wireguard/wgctrl/internal/wgtest"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 func TestIntegrationClient(t *testing.T) {
@@ -369,7 +369,6 @@ func testConfigurePeersUpdateOnly(t *testing.T, c *wgctrl.Client, d *wgtypes.Dev
 			// TODO(stv0g): remove as soon as the FreeBSD kernel module supports it
 			t.Skip("FreeBSD kernel devices do not support UpdateOnly flag")
 		}
-
 
 		t.Fatalf("failed to configure second time on %q: %v", d.Name, err)
 	}
