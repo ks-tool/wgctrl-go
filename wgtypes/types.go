@@ -1,9 +1,10 @@
 package wgtypes
 
 import (
+	crand "crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"time"
 
@@ -85,7 +86,7 @@ type Key [KeyLen]byte
 // instead.
 func GenerateKey() (Key, error) {
 	b := make([]byte, KeyLen)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := crand.Read(b); err != nil {
 		return Key{}, fmt.Errorf("wgtypes: failed to read random bytes: %v", err)
 	}
 
@@ -247,13 +248,14 @@ type Config struct {
 	S4 *int // Transport
 
 	// Message Magic Headers
-	// In AmneziaWG these can be ranges ("123-456") or single values. Hence string.
+	// In AmneziaWG 2.0 these should be ranges (e.g., "123456-123999")
 	H1 *string // Init
 	H2 *string // Response
 	H3 *string // Cookie
 	H4 *string // Transport
 
 	// Init Packet Magic / Custom Signature (obfuscation)
+	// For client-side explicit setups only.
 	I1 *string
 	I2 *string
 	I3 *string
@@ -261,78 +263,94 @@ type Config struct {
 	I5 *string
 }
 
-// generateAmneziaParams populates the config with obfuscation values.
+// GenerateAmneziaParams populates the config with obfuscation values optimized for AWG 2.0.
 func (cfg *Config) GenerateAmneziaParams() {
-	// 1. Initialize random source.
-	// We use standard math/rand because this is for obfuscation (fooling DPI),
-	// not for cryptography (encryption is handled by WireGuard keys).
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	// ==========================================
-	// 1. JUNK PACKETS (Jc, Jmin, Jmax)
-	// These packets are sent BEFORE the handshake to look like random noise.
+	// 1. PRE-SESSION JUNK PACKETS (Jc, Jmin, Jmax)
+	// Doc limits: Jc 0-10, Jmin/Jmax 64-1024 bytes.
+	// We avoid packets smaller than 64 bytes so DPI doesn't flag them as anomalies.
 	// ==========================================
 
-	// Jc: Packet Count.
-	// We send between 3 and 7 junk packets.
-	// High values (e.g., >20) delay the connection start. 3-7 is optimal.
-	cfg.Jc = intPtr(3 + r.Intn(5))
+	cfg.Jc = intPtr(3 + rand.IntN(4)) // 3 to 6 packets
 
-	// Jmin/Jmax: Packet Size (Bytes).
-	// We keep them small (~40-90 bytes) to resemble TCP ACK/SYN packets.
-	// We ensure Jmax is significantly smaller than MTU (usually 1280 or 1500).
-	cfg.Jmin = intPtr(40 + r.Intn(20))             // 40-59 bytes
-	cfg.Jmax = intPtr(*cfg.Jmin + 20 + r.Intn(40)) // Jmin + (20-59 bytes)
+	// AWG Go core easily handles up to 1024. We wanna look like UDP app traffic.
+	cfg.Jmin = intPtr(64 + rand.IntN(50))              // 64-113 bytes
+	cfg.Jmax = intPtr(*cfg.Jmin + 50 + rand.IntN(100)) // Jmin + (50-149 bytes)
 
 	// ==========================================
-	// 2. PACKET PADDING (S1, S2...)
-	// These values add random garbage bytes to the END of WireGuard packets.
-	// This breaks the fixed size signatures of the protocol.
+	// 2. PACKET PADDING (S1, S2, S3, S4)
+	// Doc limits: S1-S3: 0-64 bytes. S4: 0-32 bytes.
+	// Base standard WG sizes: Init=148, Resp=92, Cookie=64.
+	// Random garbage bytes prepended to the START of WireGuard packets.
 	// ==========================================
 
-	// S1: Init Message Padding (Bytes).
-	// Standard WG Init packet is exactly 148 bytes.
-	// We add 20-100 bytes. The packet remains small enough to travel safely.
-	cfg.S1 = intPtr(20 + r.Intn(80))
+	for {
+		// Strict limits to prevent high overhead while breaking WG signature
+		s1 := 15 + rand.IntN(49) // 15-63 bytes
+		s2 := 15 + rand.IntN(49) // 15-63 bytes
+		s3 := 10 + rand.IntN(54) // 10-63 bytes
+		s4 := 1 + rand.IntN(15)  // 1-15 bytes (keep Transport small to save MTU)
 
-	// S2: Response Message Padding (Bytes).
-	// Standard WG Response is 92 bytes.
-	cfg.S2 = intPtr(20 + r.Intn(80))
+		// Rule A: All padding values must be unique
+		if s1 == s2 || s1 == s3 || s1 == s4 || s2 == s3 || s2 == s4 || s3 == s4 {
+			continue
+		}
 
-	// S3: Cookie Message Padding.
-	// Rarely sent, but good to mask just in case.
-	cfg.S3 = intPtr(10 + r.Intn(30))
+		// Rule B: Total resulting packet sizes must NEVER be equal
+		// len(init) = 148 + s1, len(resp) = 92 + s2, len(cookie) = 64 + s3
+		if s1+148 == s2+92 {
+			continue
+		} // Init and Resp collision
+		if s3+64 == s1+148 {
+			continue
+		} // Cookie and Init collision
+		if s3+64 == s2+92 {
+			continue
+		} // Cookie and Resp collision
 
-	// S4: Transport Data Padding.
-	// IMPORTANT: This adds bytes to EVERY data packet (YouTube, downloads, etc).
-	// We keep it at 0 to avoid bandwidth overhead and speed loss.
-	cfg.S4 = intPtr(0)
-
-	// ==========================================
-	// 3. MAGIC HEADERS (H1 - H4)
-	// These emulate the Packet ID (uint32).
-	// Standard WireGuard uses 1, 2, 3, 4. Amnezia allows custom values.
-	// ==========================================
-
-	// We generate distinct, static random integers for each header type.
-	// We use a safe offset (e.g. > 1,000,000) to avoid conflict with standard protocols.
-	// The maximum value for uint32 is ~4 Billion.
-
-	// Helper to generate a static string representation of a random uint32
-	genStaticHeader := func() *string {
-		// Generate a random number between 100,000,000 and 2,100,000,000
-		val := 100000000 + r.Intn(2000000000)
-		res := fmt.Sprintf("%d", val)
-		return &res
+		// Apply values and break the loop
+		cfg.S1, cfg.S2, cfg.S3, cfg.S4 = intPtr(s1), intPtr(s2), intPtr(s3), intPtr(s4)
+		break
 	}
 
-	cfg.H1 = genStaticHeader() // Handshake Initiation
-	cfg.H2 = genStaticHeader() // Handshake Response
-	cfg.H3 = genStaticHeader() // Cookie Reply
-	cfg.H4 = genStaticHeader() // Transport Data
+	// ==========================================
+	// 3. MAGIC HEADERS RANGES (H1 - H4)
+	// We generate 4 non-overlapping mathematical ranges (to satisfy the Go parser).
+	// Then we shuffle them so that H1 < H2 < H3 < H4 is mathematically destroyed,
+	// preventing heuristic DPI signature matching.
+	// We keep max value below math.MaxInt32 to prevent integer
+	// overflow crashes on legacy C++ clients which parse strings into signed ints.
+	// ==========================================
+
+	currentOffset := 150_000_000 + rand.IntN(50_000_000)
+	ranges := make([]*string, 4)
+
+	// Step 3.1: Generate strictly increasing non-overlapping ranges
+	for i := 0; i < 4; i++ {
+		rangeStart := currentOffset
+		rangeEnd := rangeStart + 50_000_000 + rand.IntN(100_000_000)
+
+		valStr := fmt.Sprintf("%d-%d", rangeStart, rangeEnd)
+		ranges[i] = &valStr
+
+		// Add a guaranteed gap to prevent overlap
+		currentOffset = rangeEnd + 10_000_000 + rand.IntN(20_000_000)
+	}
+
+	// Step 3.2: SHUFFLE THE RANGES (The Anti-Heuristic Magic)
+	rand.Shuffle(len(ranges), func(i, j int) {
+		ranges[i], ranges[j] = ranges[j], ranges[i]
+	})
+
+	// Step 3.3: Assign shuffled ranges to packet types
+	cfg.H1 = ranges[0] // Handshake Initiation
+	cfg.H2 = ranges[1] // Handshake Response
+	cfg.H3 = ranges[2] // Cookie Reply
+	cfg.H4 = ranges[3] // Transport Data
 
 	// Init-packets (I1..I5) are usually for specific protocol emulation (TLS/DTLS).
-	// General recommendation is to use it on the client side only
+	// Left intentionally nil here so standard AWG fallback applies,
+	// unless explicitly injected by a user config template.
 }
 
 // intPtr is a helper to get a pointer to an int generic literal
