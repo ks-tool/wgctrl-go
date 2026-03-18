@@ -329,9 +329,7 @@ func (cfg *Config) GenerateAmneziaParams() {
 	for i := 0; i < 4; i++ {
 		rangeStart := currentOffset
 		rangeEnd := rangeStart + 50_000_000 + rand.IntN(100_000_000)
-
-		valStr := fmt.Sprintf("%d-%d", rangeStart, rangeEnd)
-		ranges[i] = &valStr
+		ranges[i] = strPtr(fmt.Sprintf("%d-%d", rangeStart, rangeEnd))
 
 		// Add a guaranteed gap to prevent overlap
 		currentOffset = rangeEnd + 10_000_000 + rand.IntN(20_000_000)
@@ -349,13 +347,19 @@ func (cfg *Config) GenerateAmneziaParams() {
 	cfg.H4 = ranges[3] // Transport Data
 
 	// Init-packets (I1..I5) are usually for specific protocol emulation (TLS/DTLS).
-	// Left intentionally nil here so standard AWG fallback applies,
-	// unless explicitly injected by a user config template.
+	// From Doc:
+	// If the parameter I1 is missing, the entire chain (I2-I5) is skipped, and AmneziaWG behaves as AmneziaWG 1.0, simplifying compatibility.
+	i1Length := 15 + rand.IntN(26)
+	cfg.I1 = strPtr(fmt.Sprintf("<r %d>", i1Length))
 }
 
 // intPtr is a helper to get a pointer to an int generic literal
 func intPtr(i int) *int {
 	return &i
+}
+
+func strPtr(s string) *string {
+	return &s
 }
 
 // TODO(mdlayher): consider adding ProtocolVersion in PeerConfig.
