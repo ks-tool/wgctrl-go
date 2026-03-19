@@ -296,17 +296,13 @@ func (cfg *Config) GenerateAmneziaParams() {
 			continue
 		}
 
-		// Rule B: Total resulting packet sizes must NEVER be equal
-		// len(init) = 148 + s1, len(resp) = 92 + s2, len(cookie) = 64 + s3
-		if s1+148 == s2+92 {
+		// Rule B: Total resulting packet sizes must NEVER be equal.
+		// NOTE: We do not check S4 against control packets because Transport
+		// packets have variable payload sizes. The AWG core handles Transport
+		// size alignment dynamically using inner MsgType validation.
+		if s1+148 == s2+92 || s3+64 == s1+148 || s3+64 == s2+92 {
 			continue
-		} // Init and Resp collision
-		if s3+64 == s1+148 {
-			continue
-		} // Cookie and Init collision
-		if s3+64 == s2+92 {
-			continue
-		} // Cookie and Resp collision
+		}
 
 		// Apply values and break the loop
 		cfg.S1, cfg.S2, cfg.S3, cfg.S4 = intPtr(s1), intPtr(s2), intPtr(s3), intPtr(s4)
