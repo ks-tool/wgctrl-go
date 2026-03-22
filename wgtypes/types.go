@@ -347,6 +347,9 @@ func (cfg *Config) GenerateAmneziaParams() {
 	// If the parameter I1 is missing, the entire chain (I2-I5) is skipped, and AmneziaWG behaves as AmneziaWG 1.0, simplifying compatibility.
 	i1Length := 15 + rand.IntN(26)
 	cfg.I1 = strPtr(fmt.Sprintf("<r %d>", i1Length))
+
+	// Got it from amnezia desktop client. Without it some dpi drops packets
+	cfg.I1 = strPtr("<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>")
 }
 
 // intPtr is a helper to get a pointer to an int generic literal
