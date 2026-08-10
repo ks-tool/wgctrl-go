@@ -153,7 +153,7 @@ func (c *Client) ConfigureDevice(name string, cfg wgtypes.Config) error {
 	}
 
 	for _, batch := range batches {
-		attrs, err := configAttrs(name, batch)
+		attrs, err := configAttrs(name, batch, family.Version)
 		if err != nil {
 			return err
 		}

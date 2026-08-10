@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
 	"unsafe"
 
 	"github.com/Jipok/wgctrl-go/wgtypes"
@@ -37,9 +38,21 @@ const (
 	WGDEVICE_A_I5 = 25
 )
 
+// genlVersionAWG3 is the generic netlink family version amneziawg-dkms v3.0
+// reports (WG_GENL_VERSION; mainline WireGuard reports 1, amneziawg-dkms v1.x
+// reports 2). v3.0 changed two attribute encodings on the wire:
+// WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL became a u32 (u16 before) and
+// WGDEVICE_A_H1..H4 became u64 values (NUL-terminated range strings before) —
+// its nla_policy rejects the old widths, so writes must match the family
+// version the kernel reported.
+const genlVersionAWG3 = 3
+
 // configAttrs creates the required encoded netlink attributes to configure
-// the device specified by name using the non-nil fields in cfg.
-func configAttrs(name string, cfg wgtypes.Config) ([]byte, error) {
+// the device specified by name using the non-nil fields in cfg. genlVersion
+// is the generic netlink family version reported by the kernel for the target
+// family; attribute widths that changed in amneziawg-dkms v3.0 are keyed off
+// it (see genlVersionAWG3).
+func configAttrs(name string, cfg wgtypes.Config, genlVersion uint8) ([]byte, error) {
 	ae := netlink.NewAttributeEncoder()
 	ae.String(unix.WGDEVICE_A_IFNAME, name)
 
@@ -88,18 +101,30 @@ func configAttrs(name string, cfg wgtypes.Config) ([]byte, error) {
 		ae.Uint16(WGDEVICE_A_S4, uint16(*cfg.S4))
 	}
 
-	// String parameters (Magic Headers)
-	if cfg.H1 != nil {
-		ae.String(WGDEVICE_A_H1, *cfg.H1)
-	}
-	if cfg.H2 != nil {
-		ae.String(WGDEVICE_A_H2, *cfg.H2)
-	}
-	if cfg.H3 != nil {
-		ae.String(WGDEVICE_A_H3, *cfg.H3)
-	}
-	if cfg.H4 != nil {
-		ae.String(WGDEVICE_A_H4, *cfg.H4)
+	// Magic Headers. Up to amneziawg-dkms v1.x these are NUL-terminated
+	// strings (a single value or an AmneziaWG 2.0 range like "123456-123999");
+	// v3.0 accepts only a single u64 value.
+	for _, h := range []struct {
+		typ uint16
+		val *string
+	}{
+		{WGDEVICE_A_H1, cfg.H1},
+		{WGDEVICE_A_H2, cfg.H2},
+		{WGDEVICE_A_H3, cfg.H3},
+		{WGDEVICE_A_H4, cfg.H4},
+	} {
+		if h.val == nil {
+			continue
+		}
+		if genlVersion >= genlVersionAWG3 {
+			v, err := strconv.ParseUint(*h.val, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("wglinux: magic header attribute %d: amneziawg-dkms v3 accepts a single numeric value, not %q (ranges are not supported by v3)", h.typ, *h.val)
+			}
+			ae.Uint64(h.typ, v)
+		} else {
+			ae.String(h.typ, *h.val)
+		}
 	}
 
 	// String parameters (Custom Packets)
@@ -125,7 +150,7 @@ func configAttrs(name string, cfg wgtypes.Config) ([]byte, error) {
 		ae.Nested(unix.WGDEVICE_A_PEERS, func(nae *netlink.AttributeEncoder) error {
 			// Netlink arrays use type as an array index.
 			for i, p := range cfg.Peers {
-				nae.Nested(uint16(i), encodePeer(p))
+				nae.Nested(uint16(i), encodePeer(p, genlVersion))
 			}
 
 			return nil
@@ -253,7 +278,9 @@ func buildBatches(cfg wgtypes.Config) []wgtypes.Config {
 }
 
 // encodePeer returns a function to encode PeerConfig nested attributes.
-func encodePeer(p wgtypes.PeerConfig) func(ae *netlink.AttributeEncoder) error {
+// genlVersion selects the persistent keepalive attribute width (u32 for
+// amneziawg-dkms v3.0, u16 before — see genlVersionAWG3).
+func encodePeer(p wgtypes.PeerConfig, genlVersion uint8) func(ae *netlink.AttributeEncoder) error {
 	return func(ae *netlink.AttributeEncoder) error {
 		ae.Bytes(unix.WGPEER_A_PUBLIC_KEY, p.PublicKey[:])
 
@@ -281,7 +308,14 @@ func encodePeer(p wgtypes.PeerConfig) func(ae *netlink.AttributeEncoder) error {
 		}
 
 		if p.PersistentKeepaliveInterval != nil {
-			ae.Uint16(unix.WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL, uint16(p.PersistentKeepaliveInterval.Seconds()))
+			// amneziawg-dkms v3.0's nla_policy declares this NLA_U32 and
+			// rejects the mainline u16 width, and vice versa — match the
+			// width to the family version the kernel reported.
+			if genlVersion >= genlVersionAWG3 {
+				ae.Uint32(unix.WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL, uint32(p.PersistentKeepaliveInterval.Seconds()))
+			} else {
+				ae.Uint16(unix.WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL, uint16(p.PersistentKeepaliveInterval.Seconds()))
+			}
 		}
 
 		// Only apply allowed IPs if necessary.

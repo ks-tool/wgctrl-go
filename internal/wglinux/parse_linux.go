@@ -12,6 +12,7 @@ import (
 	"github.com/Jipok/wgctrl-go/wgtypes"
 	"github.com/mdlayher/genetlink"
 	"github.com/mdlayher/netlink"
+	"github.com/mdlayher/netlink/nlenc"
 	"golang.org/x/sys/unix"
 )
 
@@ -112,7 +113,21 @@ func parsePeer(ad *netlink.AttributeDecoder) wgtypes.Peer {
 			p.Endpoint = &net.UDPAddr{}
 			ad.Do(parseSockaddr(p.Endpoint))
 		case unix.WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL:
-			p.PersistentKeepaliveInterval = time.Duration(ad.Uint16()) * time.Second
+			// Mainline WireGuard and amneziawg-dkms up to v1.x send this as a
+			// u16; amneziawg-dkms v3.0 (genl family version 3) widened it to a
+			// u32. Accept both — otherwise a single v3 peer makes its whole
+			// device (and with it Devices()) unparseable.
+			ad.Do(func(b []byte) error {
+				switch len(b) {
+				case 2:
+					p.PersistentKeepaliveInterval = time.Duration(nlenc.Uint16(b)) * time.Second
+				case 4:
+					p.PersistentKeepaliveInterval = time.Duration(nlenc.Uint32(b)) * time.Second
+				default:
+					return fmt.Errorf("wglinux: unexpected persistent keepalive interval length: %d", len(b))
+				}
+				return nil
+			})
 		case unix.WGPEER_A_LAST_HANDSHAKE_TIME:
 			ad.Do(parseTimespec(&p.LastHandshakeTime))
 		case unix.WGPEER_A_RX_BYTES:
